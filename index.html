@@ -24,8 +24,8 @@
         .copy-btn {
             @apply bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 transition-colors flex items-center gap-1;
         }
-        .btn-group {
-            @apply absolute top-2 right-2 flex gap-2;
+        .btn-container {
+            @apply absolute top-2 right-2 flex gap-4 bg-white p-1 rounded-md border border-gray-200 shadow-sm;
         }
     </style>
 </head>
@@ -63,7 +63,7 @@
                     <div class="mb-6">
                         <label class="block text-sm font-medium text-gray-700 mb-2">Sentence Result:</label>
                         <div class="output-box" id="sentence-container">
-                            <div class="btn-group">
+                            <div class="btn-container">
                                 <button onclick="copyToClipboard('sentence-text')" class="copy-btn" id="copy-sentence-btn">
                                     Copy
                                 </button>
@@ -71,7 +71,7 @@
                                     RTF
                                 </button>
                             </div>
-                            <div id="sentence-text" class="pr-20 min-h-[3rem]">No allergens selected.</div>
+                            <div id="sentence-text" class="pr-24 min-h-[3rem]">No allergens selected.</div>
                         </div>
                     </div>
 
@@ -79,7 +79,7 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">Formal Result:</label>
                         <div class="output-box" id="formal-container">
-                            <div class="btn-group">
+                            <div class="btn-container">
                                 <button onclick="copyToClipboard('formal-text')" class="copy-btn" id="copy-formal-btn">
                                     Copy
                                 </button>
@@ -87,7 +87,7 @@
                                     RTF
                                 </button>
                             </div>
-                            <div id="formal-text" class="pr-20 whitespace-pre-wrap min-h-[8rem]">No allergens selected.</div>
+                            <div id="formal-text" class="pr-24 whitespace-pre-wrap min-h-[8rem]">No allergens selected.</div>
                         </div>
                     </div>
                 </div>
@@ -225,7 +225,7 @@
 
             let formalHtml = "";
             if (selected.length > 0) {
-                formalHtml += `<div class="mb-4 text-sm font-medium border-b pb-2">The tested allergens are listed below, with cross-reactive allergens included in parentheses.</div>`;
+                formalHtml += `<div class="mb-4 text-[11px] text-gray-500 border-b pb-2 italic" style="max-width: 7in;">Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.</div>`;
             }
             
             allergenData.forEach(cat => {
@@ -237,13 +237,21 @@
                         }
                         return selectedName;
                     });
-                    formalHtml += `<div class="mb-3"><strong>${cat.category.toUpperCase()}</strong>:<br>${itemStrings.join("<br>")}</div>`;
+                    
+                    // Create a two-column layout for items
+                    let itemsHtml = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; max-width: 7in;">`;
+                    itemStrings.forEach(item => {
+                        itemsHtml += `<div class="flex items-start"><span class="mr-1.5 opacity-50">•</span><span style="word-break: break-word;">${item}</span></div>`;
+                    });
+                    itemsHtml += `</div>`;
+                    
+                    formalHtml += `
+                        <div class="mb-3" style="max-width: 7in;">
+                            <strong class="block border-b border-gray-200 mb-1">${cat.category.toUpperCase()}</strong>
+                            ${itemsHtml}
+                        </div>`;
                 }
             });
-            
-            if (formalHtml) {
-                formalHtml += `<div class="mt-4 text-[11px] text-gray-500 border-t pt-2 italic">Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.</div>`;
-            }
             
             formalEl.innerHTML = formalHtml;
         }
@@ -264,20 +272,74 @@
         }
 
         async function copyToClipboard(elementId) {
-            const text = document.getElementById(elementId).innerText;
+            const el = document.getElementById(elementId);
+            const text = el.innerText;
             const type = elementId.split('-')[0];
-            const rtf = generateRTF(type);
             const btn = document.querySelector(`#copy-${type}-btn`);
             
             try {
-                if (rtf && window.ClipboardItem && !window.MSStream) { // Avoid issues on older browsers
-                    const blobs = {
-                        'text/plain': new Blob([text], { type: 'text/plain' }),
-                        'text/rtf': new Blob([rtf], { type: 'text/rtf' }),
-                        'text/html': new Blob([document.getElementById(elementId).innerHTML], { type: 'text/html' })
-                    };
-                    await navigator.clipboard.write([new ClipboardItem(blobs)]);
+                if (type === 'formal') {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.contentEditable = true;
+                    tempDiv.style.position = 'fixed';
+                    tempDiv.style.left = '-9999px';
+                    tempDiv.style.top = '0';
+                    
+                    // Create a Word-friendly table layout for 2-column allergens constrained to 7 inches
+                    let richHtml = `<div style="font-family: Arial; font-size: 11pt; width: 7in;">`;
+                    
+                    richHtml += `<p style="margin-bottom: 15px; font-size: 9pt; font-style: italic; color: #666; border-bottom: 1px solid #eee; padding-bottom: 5px; width: 7in;">
+                        Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.
+                    </p>`;
+
+                    allergenData.forEach(cat => {
+                        const selectedItems = Array.from(document.querySelectorAll(`input[data-category="${cat.category}"]:checked`));
+                        if (selectedItems.length > 0) {
+                            richHtml += `<p style="margin-top: 15px; margin-bottom: 5px; border-bottom: 1px solid #ccc; width: 7in;"><strong>${cat.category.toUpperCase()}</strong></p>`;
+                            
+                            richHtml += `<table border="0" cellpadding="0" cellspacing="0" style="width: 7in; table-layout: fixed;"><tr>`;
+                            
+                            const items = selectedItems.map(cb => {
+                                const itemData = cat.items.find(i => i.name === cb.value);
+                                return itemData && itemData.cross ? `${cb.value} (${itemData.cross})` : cb.value;
+                            });
+
+                            // Split items into two columns
+                            const half = Math.ceil(items.length / 2);
+                            const leftCol = items.slice(0, half);
+                            const rightCol = items.slice(half);
+
+                            richHtml += `<td style="width: 3.5in; vertical-align: top; padding-right: 10px; word-wrap: break-word; white-space: normal;">`;
+                            leftCol.forEach(item => richHtml += `<div style="margin-bottom: 2px;">• ${item}</div>`);
+                            richHtml += `</td>`;
+
+                            richHtml += `<td style="width: 3.5in; vertical-align: top; word-wrap: break-word; white-space: normal;">`;
+                            rightCol.forEach(item => richHtml += `<div style="margin-bottom: 2px;">• ${item}</div>`);
+                            richHtml += `</td>`;
+
+                            richHtml += `</tr></table>`;
+                        }
+                    });
+
+                    richHtml += `</div>`;
+
+                    tempDiv.innerHTML = richHtml;
+                    document.body.appendChild(tempDiv);
+                    
+                    const range = document.createRange();
+                    range.selectNodeContents(tempDiv);
+                    const selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    
+                    const success = document.execCommand('copy');
+                    
+                    selection.removeAllRanges();
+                    document.body.removeChild(tempDiv);
+                    
+                    if (!success) throw new Error("Copy command unsuccessful");
                 } else {
+                    // Standard text copy for sentence result
                     await navigator.clipboard.writeText(text);
                 }
 
@@ -290,13 +352,14 @@
                     btn.classList.replace('bg-green-600', 'bg-blue-600');
                 }, 2000);
             } catch (err) {
-                console.error('Failed to copy: ', err);
+                console.error('Failed to copy rich text: ', err);
+                // Last ditch fallback to basic text
                 try {
                     await navigator.clipboard.writeText(text);
-                    btn.innerHTML = "Copied Text";
+                    btn.innerHTML = "Copied Text Only";
                     setTimeout(() => { btn.innerHTML = "Copy"; }, 2000);
                 } catch (e) {
-                    alert("Could not copy to clipboard. Please select and copy manually.");
+                    alert("Could not copy to clipboard. Please select manually.");
                 }
             }
         }
@@ -333,7 +396,7 @@
                     grouped[cat].push(cb.value);
                 });
 
-                content += "The tested allergens are listed below, with cross-reactive allergens included in parentheses.\\line\\line ";
+                content += "{\\i Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.}\\line ";
                 
                 allergenData.forEach(cat => {
                     if (grouped[cat.category]) {
@@ -348,8 +411,6 @@
                         content += "{\\b " + escapeRTF(cat.category.toUpperCase()) + "}:\\line " + itemStrings.join("\\line ") + "\\line\\line ";
                     }
                 });
-                
-                content += "{\\i Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.}";
             }
 
             return `{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Arial;}} \\f0\\fs24 ${content}}`;
