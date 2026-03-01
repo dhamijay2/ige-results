@@ -5,9 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Allergy Test Result Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <style>
         .allergen-category {
             @apply bg-white p-4 rounded-lg shadow-sm border border-gray-100;
+            margin-bottom: 0.75rem; /* Reduce vertical spacing between categories */
         }
         .category-title {
             @apply font-bold text-blue-800 flex justify-between items-center border-b pb-1 text-sm uppercase tracking-wider mb-2;
@@ -17,6 +20,17 @@
         }
         .checkbox-item {
             @apply flex items-center space-x-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1 transition-colors w-fit;
+            margin-bottom: 0.25em; /* ~4px extra spacing between rows */
+        }
+        .checkbox-item input[type="checkbox"] {
+            width: 1.5em;
+            height: 1.5em;
+        }
+        .checkbox-item span.text-gray-700 {
+            font-size: 1.125rem; /* 18px, increased by 2pt from 14px */
+            line-height: 1.5em;
+            display: inline-flex;
+            align-items: center;
         }
         .output-box {
             @apply bg-gray-50 p-4 rounded-lg border border-gray-200 font-sans text-gray-800 relative;
@@ -38,13 +52,21 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Allergen Selection Area -->
-            <div class="lg:col-span-2 space-y-6">
+            <div class="lg:col-span-2 space-y-3">
                 <!-- Change to 2 columns max for items, categories stacked vertically -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="categories-container">
                     <!-- Dynamic categories will be injected here -->
                 </div>
-                
-                <div class="flex gap-4">
+
+                <!-- Export Handouts PDF Button -->
+                <div class="flex gap-4 mb-4">
+                    <button onclick="exportPDFHandouts()" class="bg-purple-600 text-white px-6 py-2 rounded shadow hover:bg-purple-700 transition-colors">
+                        Export Handouts (PDF)
+                    </button>
+                </div>
+
+                <!-- Check All / Clear All Buttons -->
+                <div class="flex gap-4 mb-4">
                     <button onclick="selectAll()" class="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-700 transition-colors">
                         Check All
                     </button>
@@ -52,6 +74,21 @@
                         Clear All
                     </button>
                 </div>
+
+                <!-- Show/Hide Edit Allergen List Section -->
+                <button id="toggle-editor-btn" onclick="toggleEditorSection()" class="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition-colors mb-2">
+                    Show Edit Allergen List
+                </button>
+                <div id="edit-allergen-section" class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm" style="display:none;">
+                    <h2 class="text-lg font-semibold mb-2 text-blue-800">Edit Allergen List</h2>
+                    <div id="editor-container"></div>
+                    <div class="flex gap-2 mt-4">
+                        <button onclick="saveCustomAllergenList()" class="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition-colors">Save List</button>
+                        <button onclick="resetToDefaultAllergenList()" class="bg-gray-500 text-white px-4 py-2 rounded shadow hover:bg-gray-600 transition-colors">Reset to Default</button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">Your custom allergen list will be saved in your browser and used for future visits.</p>
+                </div>
+
             </div>
 
             <!-- Result Area -->
@@ -67,9 +104,7 @@
                                 <button onclick="copyToClipboard('sentence-text')" class="copy-btn" id="copy-sentence-btn">
                                     Copy
                                 </button>
-                                <button onclick="downloadRTF('sentence')" class="copy-btn !bg-gray-600 hover:!bg-gray-700">
-                                    RTF
-                                </button>
+                                <!-- RTF button removed -->
                             </div>
                             <div id="sentence-text" class="pr-24 min-h-[3rem]">No allergens selected.</div>
                         </div>
@@ -81,11 +116,12 @@
                         <div class="output-box" id="formal-container">
                             <div class="btn-container">
                                 <button onclick="copyToClipboard('formal-text')" class="copy-btn" id="copy-formal-btn">
-                                    Copy
+                                    Copy (Rich Text)
                                 </button>
-                                <button onclick="downloadRTF('formal')" class="copy-btn !bg-gray-600 hover:!bg-gray-700">
-                                    RTF
+                                <button onclick="copyFormalPlainText()" class="copy-btn !bg-gray-500 hover:!bg-gray-700" id="copy-formal-plain-btn">
+                                    Copy (Plain Text)
                                 </button>
+                                <!-- RTF button removed -->
                             </div>
                             <div id="formal-text" class="pr-24 whitespace-pre-wrap min-h-[8rem]">No allergens selected.</div>
                         </div>
@@ -96,97 +132,228 @@
     </div>
 
     <script>
-        const allergenData = [
-            {
-                category: "Molds",
-                items: [
-                    { name: "Alternaria" },
-                    { name: "Aspergillus" },
-                    { name: "Cladosporium" },
-                    { name: "Penicillium" }
-                ]
-            },
-            {
-                category: "Tree Pollens",
-                items: [
-                    { name: "Ash", cross: "Olive - found in Europe" },
-                    { name: "Birch/Oak", cross: "Alder, Hazelnut, Hornbeam, Beech, Chestnut" },
-                    { name: "Cedar", cross: "Juniper, Cypress, Arborvitae" },
-                    { name: "Hackberry", cross: "Elm" },
-                    { name: "Maple", cross: "Box Elder" },
-                    { name: "Sycamore" },
-                    { name: "Walnut", cross: "Pecan, Hickory" },
-                    { name: "Willow", cross: "Cottonwood, Poplar, Aspen" },
-                    { name: "Mulberry" }
-                ]
-            },
-            {
-                category: "Grass Pollens",
-                items: [
-                    { name: "Bermuda" },
-                    { name: "Johnson", cross: "Corn, Bahia, sugarcane" },
-                    { name: "Timothy Grass", cross: "Orchard, Rye, Kentucky Blue, Fescue" }
-                ]
-            },
-            {
-                category: "Weed Pollens",
-                items: [
-                    { name: "Cocklebur" },
-                    { name: "Yellow Dock", cross: "Sheep Sorrel" },
-                    { name: "Firebush/Kochia", cross: "Burning Bush" },
-                    { name: "Lamb's Quarter" },
-                    { name: "Mugwort", cross: "Sage, Wormwood" },
-                    { name: "Pigweed" },
-                    { name: "English Plantain" },
-                    { name: "Russian Thistle" },
-                    { name: "Ragweed" }
-                ]
-            },
-            {
-                category: "Year-round Allergens",
-                items: [
-                    { name: "Cat" },
-                    { name: "Dog" },
-                    { name: "Mouse" },
-                    { name: "Rat" },
-                    { name: "Horse" },
-                    { name: "Cockroach" },
-                    { name: "Dust Mite" }
-                ]
-            }
+        // Cookie/localStorage helpers
+        function setCookie(name, value, days = 365) {
+            const expires = new Date(Date.now() + days * 864e5).toUTCString();
+            document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/';
+        }
+        function getCookie(name) {
+            return document.cookie.split('; ').reduce((r, v) => {
+                const parts = v.split('=');
+                return parts[0] === name ? decodeURIComponent(parts[1]) : r;
+            }, '');
+        }
+
+        // Default allergen data
+        const defaultAllergenData = [
+            { category: "Molds", items: [
+                { name: "Alternaria", pdf: "Mold.pdf" },
+                { name: "Aspergillus", pdf: "Mold.pdf" },
+                { name: "Cladosporium", pdf: "Mold.pdf" },
+                { name: "Penicillium", pdf: "Mold.pdf" }
+            ] },
+            { category: "Tree Pollens", items: [
+                { name: "Ash", cross: "Olive - found in Europe", pdf: "Pollen.pdf" },
+                { name: "Birch/Oak", cross: "Alder, Hazelnut, Hornbeam, Beech, Chestnut", pdf: "Pollen.pdf" },
+                { name: "Cedar", cross: "Juniper, Cypress, Arborvitae", pdf: "Pollen.pdf" },
+                { name: "Hackberry", cross: "Elm", pdf: "Pollen.pdf" },
+                { name: "Maple", cross: "Box Elder", pdf: "Pollen.pdf" },
+                { name: "Sycamore", pdf: "Pollen.pdf" },
+                { name: "Walnut", cross: "Pecan, Hickory", pdf: "Pollen.pdf" },
+                { name: "Willow", cross: "Cottonwood, Poplar, Aspen", pdf: "Pollen.pdf" },
+                { name: "Mulberry", pdf: "Pollen.pdf" }
+            ] },
+            { category: "Grass Pollens", items: [
+                { name: "Bermuda", pdf: "Pollen.pdf" },
+                { name: "Johnson", cross: "Corn, Bahia, sugarcane", pdf: "Pollen.pdf" },
+                { name: "Timothy Grass", cross: "Orchard, Rye, Kentucky Blue, Fescue", pdf: "Pollen.pdf" }
+            ] },
+            { category: "Weed Pollens", items: [
+                { name: "Cocklebur", pdf: "Pollen.pdf" },
+                { name: "Yellow Dock", cross: "Sheep Sorrel", pdf: "Pollen.pdf" },
+                { name: "Firebush/Kochia", cross: "Burning Bush", pdf: "Pollen.pdf" },
+                { name: "Lamb's Quarter", pdf: "Pollen.pdf" },
+                { name: "Mugwort", cross: "Sage, Wormwood", pdf: "Pollen.pdf" },
+                { name: "Pigweed", pdf: "Pollen.pdf" },
+                { name: "English Plantain", pdf: "Pollen.pdf" },
+                { name: "Russian Thistle", pdf: "Pollen.pdf" },
+                { name: "Ragweed", pdf: "Pollen.pdf" }
+            ] },
+            { category: "Year-round Allergens", items: [
+                { name: "Cat", pdf: "Cat.pdf" },
+                { name: "Dog", pdf: "Dog.pdf" },
+                { name: "Mouse", pdf: "Mouse.pdf" },
+                { name: "Rat", pdf: "Default.pdf" },
+                { name: "Horse", pdf: "Default.pdf" },
+                { name: "Cockroach", pdf: "Cockroach.pdf" },
+                { name: "Dust Mite", pdf: "Dust Mite.pdf" }
+            ] }
         ];
 
-        // Initialize UI
-        const container = document.getElementById('categories-container');
-        allergenData.forEach((cat, index) => {
-            const div = document.createElement('div');
-            div.className = 'allergen-category';
-            
-            const catId = `cat-${index}`;
-            let itemsHtml = `
-                <div class="category-title">
-                    <span>${cat.category}</span>
-                    <div class="flex gap-2">
-                        <button onclick="toggleGroup('${cat.category}', true)" class="group-btn">Select All</button>
-                        <button onclick="toggleGroup('${cat.category}', false)" class="group-btn !bg-gray-50 !text-gray-500 !border-gray-200 hover:!bg-gray-100">Clear</button>
+        // Load allergen data from cookie or fallback to default
+        function loadAllergenData() {
+            const cookie = getCookie('customAllergenList');
+            if (cookie) {
+                try {
+                    return JSON.parse(cookie);
+                } catch (e) {
+                    return defaultAllergenData;
+                }
+            }
+            return defaultAllergenData;
+        }
+
+        let allergenData = loadAllergenData();
+
+        // Render allergen selection UI
+        function renderAllergenSelection() {
+            const container = document.getElementById('categories-container');
+            container.innerHTML = '';
+            allergenData.forEach((cat, index) => {
+                const div = document.createElement('div');
+                div.className = 'allergen-category';
+                const catId = `cat-${index}`;
+                let itemsHtml = `
+                    <div class="category-title">
+                        <span>${cat.category}</span>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="toggleGroup('${cat.category}', true)" class="group-btn">Select All</button>
+                            <button type="button" onclick="toggleGroup('${cat.category}', false)" class="group-btn !bg-gray-50 !text-gray-500 !border-gray-200 hover:!bg-gray-100">Clear</button>
+                        </div>
                     </div>
-                </div>
-                <div class="grid grid-cols-1 gap-x-4">`; // Single vertical line for items
-            
-            cat.items.forEach(itemObj => {
-                const item = itemObj.name;
-                itemsHtml += `
-                    <label class="checkbox-item">
-                        <input type="checkbox" name="allergen" value="${item}" data-category="${cat.category}" 
-                               onchange="updateResults()" class="rounded text-blue-600">
-                        <span class="text-gray-700 text-sm whitespace-nowrap">${item}</span>
-                    </label>
-                `;
+                    <div class="grid grid-cols-1 gap-x-4">`;
+                cat.items.forEach(itemObj => {
+                    const item = itemObj.name;
+                    itemsHtml += `
+                        <label class="checkbox-item">
+                            <input type="checkbox" name="allergen" value="${item}" data-category="${cat.category}" onchange="updateResults()" class="rounded text-blue-600">
+                            <span class="text-gray-700 text-sm whitespace-nowrap">${item}</span>
+                        </label>
+                    `;
+                });
+                itemsHtml += `</div>`;
+                div.innerHTML = itemsHtml;
+                container.appendChild(div);
             });
-            itemsHtml += `</div>`;
-            div.innerHTML = itemsHtml;
-            container.appendChild(div);
-        });
+            updateResults();
+        }
+
+        // Render allergen list editor UI
+        function renderAllergenEditor() {
+            const editor = document.getElementById('editor-container');
+            editor.innerHTML = '';
+            const pdfOptions = ["Default.pdf", "Mold.pdf", "Pollen.pdf", "Cat.pdf", "Dog.pdf", "Mouse.pdf", "Cockroach.pdf", "Dust Mite.pdf"];
+            allergenData.forEach((cat, catIdx) => {
+                const catDiv = document.createElement('div');
+                catDiv.className = 'mb-4 p-2 border rounded';
+                catDiv.innerHTML = `
+                    <div class="flex items-center gap-2 mb-2">
+                        <input type="text" value="${cat.category}" class="border px-2 py-1 rounded w-48 font-bold text-blue-700" onchange="updateCategoryName(${catIdx}, this.value)">
+                        <select onchange="updateCategoryPDF(${catIdx}, this.value)" class="border px-2 py-1 rounded w-44">
+                            ${pdfOptions.map(opt => `<option value='${opt}'${cat.pdf === opt ? ' selected' : ''}>${opt.replace('.pdf','')}</option>`).join('')}
+                        </select>
+                        <button type="button" onclick="removeCategory(${catIdx})" class="group-btn !bg-red-100 !text-red-600 !border-red-200">Delete Category</button>
+                    </div>
+                    <div id="items-${catIdx}"></div>
+                    <div class="mt-2 flex gap-2">
+                        <button type="button" onclick="addItem(${catIdx})" class="group-btn">Add Item</button>
+                    </div>
+                `;
+                editor.appendChild(catDiv);
+                renderItemsEditor(catIdx);
+            });
+            // Add new category button
+            const addCatBtn = document.createElement('button');
+            addCatBtn.textContent = 'Add Category';
+            addCatBtn.className = 'group-btn mt-2';
+            addCatBtn.onclick = () => {
+                allergenData.push({ category: 'New Category', items: [], pdf: 'Default.pdf' });
+                renderAllergenEditor();
+            };
+            editor.appendChild(addCatBtn);
+        }
+
+        window.updateCategoryPDF = function(idx, val) {
+            allergenData[idx].pdf = val;
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+
+        function renderItemsEditor(catIdx) {
+            const itemsDiv = document.getElementById(`items-${catIdx}`);
+            itemsDiv.innerHTML = '';
+            const pdfOptions = ["Default.pdf", "Mold.pdf", "Pollen.pdf", "Cat.pdf", "Dog.pdf", "Mouse.pdf", "Cockroach.pdf", "Dust Mite.pdf"];
+            allergenData[catIdx].items.forEach((item, itemIdx) => {
+                const itemRow = document.createElement('div');
+                itemRow.className = 'flex items-center gap-2 mb-1';
+                itemRow.innerHTML = `
+                    <input type="text" value="${item.name}" class="border px-2 py-1 rounded w-40" onchange="updateItemName(${catIdx}, ${itemIdx}, this.value)">
+                    <input type="text" value="${item.cross || ''}" placeholder="Cross-reactive info (optional)" class="border px-2 py-1 rounded w-56" onchange="updateItemCross(${catIdx}, ${itemIdx}, this.value)">
+                    <select onchange="updateItemPDF(${catIdx}, ${itemIdx}, this.value)" class="border px-2 py-1 rounded w-44">
+                        ${pdfOptions.map(opt => `<option value='${opt}'${item.pdf === opt ? ' selected' : ''}>${opt.replace('.pdf','')}</option>`).join('')}
+                    </select>
+                    <button type="button" onclick="removeItem(${catIdx}, ${itemIdx})" class="group-btn !bg-red-100 !text-red-600 !border-red-200">Delete</button>
+                `;
+                itemsDiv.appendChild(itemRow);
+            });
+        }
+
+        window.updateItemPDF = function(catIdx, itemIdx, val) {
+            allergenData[catIdx].items[itemIdx].pdf = val;
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+
+        // Editor actions
+        window.updateCategoryName = function(idx, val) {
+            allergenData[idx].category = val;
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        window.removeCategory = function(idx) {
+            allergenData.splice(idx, 1);
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        window.addItem = function(catIdx) {
+            allergenData[catIdx].items.push({ name: 'New Allergen' });
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        window.removeItem = function(catIdx, itemIdx) {
+            allergenData[catIdx].items.splice(itemIdx, 1);
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        window.updateItemName = function(catIdx, itemIdx, val) {
+            allergenData[catIdx].items[itemIdx].name = val;
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        window.updateItemCross = function(catIdx, itemIdx, val) {
+            allergenData[catIdx].items[itemIdx].cross = val;
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+
+        // Save/load/reset custom allergen list
+        window.saveCustomAllergenList = function() {
+            setCookie('customAllergenList', JSON.stringify(allergenData));
+            alert('Custom allergen list saved!');
+        };
+        window.resetToDefaultAllergenList = function() {
+            allergenData = JSON.parse(JSON.stringify(defaultAllergenData));
+            setCookie('customAllergenList', '');
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+
+        // Initial render
+        window.onload = function() {
+            renderAllergenSelection();
+            renderAllergenEditor();
+        };
+        // ...existing code...
 
         function updateResults() {
             const selected = Array.from(document.querySelectorAll('input[name="allergen"]:checked'));
@@ -223,37 +390,24 @@
                 grouped[cat].push(cb.value);
             });
 
-            let formalHtml = "";
+            let formalText = "";
             if (selected.length > 0) {
-                formalHtml += `<div class="mb-4 text-[11px] text-gray-500 border-b pb-2 italic" style="max-width: 7in;">Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.</div>`;
+                formalText += "Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.\n\n";
             }
-            
             allergenData.forEach(cat => {
                 if (grouped[cat.category]) {
+                    formalText += cat.category.toUpperCase() + "\n";
                     const itemStrings = grouped[cat.category].map(selectedName => {
                         const itemData = cat.items.find(i => i.name === selectedName);
                         if (itemData && itemData.cross) {
-                            return `${selectedName} (${itemData.cross})`;
+                            return `• ${selectedName} (${itemData.cross})`;
                         }
-                        return selectedName;
+                        return `• ${selectedName}`;
                     });
-                    
-                    // Create a two-column layout for items
-                    let itemsHtml = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; max-width: 7in;">`;
-                    itemStrings.forEach(item => {
-                        itemsHtml += `<div class="flex items-start"><span class="mr-1.5 opacity-50">•</span><span style="word-break: break-word;">${item}</span></div>`;
-                    });
-                    itemsHtml += `</div>`;
-                    
-                    formalHtml += `
-                        <div class="mb-3" style="max-width: 7in;">
-                            <strong class="block border-b border-gray-200 mb-1">${cat.category.toUpperCase()}</strong>
-                            ${itemsHtml}
-                        </div>`;
+                    formalText += itemStrings.join("\n") + "\n\n";
                 }
             });
-            
-            formalEl.innerHTML = formalHtml;
+            formalEl.innerHTML = `<pre style="font-family:inherit;font-size:inherit;white-space:pre-wrap;">${formalText.trim()}</pre>`;
         }
 
         function resetSelections() {
@@ -273,76 +427,41 @@
 
         async function copyToClipboard(elementId) {
             const el = document.getElementById(elementId);
-            const text = el.innerText;
             const type = elementId.split('-')[0];
             const btn = document.querySelector(`#copy-${type}-btn`);
-            
             try {
                 if (type === 'formal') {
-                    const tempDiv = document.createElement('div');
-                    tempDiv.contentEditable = true;
-                    tempDiv.style.position = 'fixed';
-                    tempDiv.style.left = '-9999px';
-                    tempDiv.style.top = '0';
-                    
-                    // Create a Word-friendly table layout for 2-column allergens constrained to 7 inches
-                    let richHtml = `<div style="font-family: Arial; font-size: 11pt; width: 7in;">`;
-                    
-                    richHtml += `<p style="margin-bottom: 15px; font-size: 9pt; font-style: italic; color: #666; border-bottom: 1px solid #eee; padding-bottom: 5px; width: 7in;">
-                        Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.
-                    </p>`;
-
-                    allergenData.forEach(cat => {
-                        const selectedItems = Array.from(document.querySelectorAll(`input[data-category="${cat.category}"]:checked`));
-                        if (selectedItems.length > 0) {
-                            richHtml += `<p style="margin-top: 15px; margin-bottom: 5px; border-bottom: 1px solid #ccc; width: 7in;"><strong>${cat.category.toUpperCase()}</strong></p>`;
-                            
-                            richHtml += `<table border="0" cellpadding="0" cellspacing="0" style="width: 7in; table-layout: fixed;"><tr>`;
-                            
-                            const items = selectedItems.map(cb => {
-                                const itemData = cat.items.find(i => i.name === cb.value);
-                                return itemData && itemData.cross ? `${cb.value} (${itemData.cross})` : cb.value;
-                            });
-
-                            // Split items into two columns
-                            const half = Math.ceil(items.length / 2);
-                            const leftCol = items.slice(0, half);
-                            const rightCol = items.slice(half);
-
-                            richHtml += `<td style="width: 3.5in; vertical-align: top; padding-right: 10px; word-wrap: break-word; white-space: normal;">`;
-                            leftCol.forEach(item => richHtml += `<div style="margin-bottom: 2px;">• ${item}</div>`);
-                            richHtml += `</td>`;
-
-                            richHtml += `<td style="width: 3.5in; vertical-align: top; word-wrap: break-word; white-space: normal;">`;
-                            rightCol.forEach(item => richHtml += `<div style="margin-bottom: 2px;">• ${item}</div>`);
-                            richHtml += `</td>`;
-
-                            richHtml += `</tr></table>`;
-                        }
-                    });
-
-                    richHtml += `</div>`;
-
-                    tempDiv.innerHTML = richHtml;
-                    document.body.appendChild(tempDiv);
-                    
-                    const range = document.createRange();
-                    range.selectNodeContents(tempDiv);
-                    const selection = window.getSelection();
-                    selection.removeAllRanges();
-                    selection.addRange(range);
-                    
-                    const success = document.execCommand('copy');
-                    
-                    selection.removeAllRanges();
-                    document.body.removeChild(tempDiv);
-                    
-                    if (!success) throw new Error("Copy command unsuccessful");
+                    // Get the HTML content of the formal result
+                    let html = el.innerHTML;
+                    // Use Clipboard API for HTML if available
+                    if (navigator.clipboard && window.ClipboardItem) {
+                        await navigator.clipboard.write([
+                            new ClipboardItem({
+                                'text/html': new Blob([html], { type: 'text/html' })
+                            })
+                        ]);
+                    } else {
+                        // Fallback to execCommand
+                        const tempDiv = document.createElement('div');
+                        tempDiv.contentEditable = true;
+                        tempDiv.style.position = 'fixed';
+                        tempDiv.style.left = '-9999px';
+                        tempDiv.style.top = '0';
+                        tempDiv.innerHTML = html;
+                        document.body.appendChild(tempDiv);
+                        const range = document.createRange();
+                        range.selectNodeContents(tempDiv);
+                        const selection = window.getSelection();
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        document.execCommand('copy');
+                        selection.removeAllRanges();
+                        document.body.removeChild(tempDiv);
+                    }
                 } else {
                     // Standard text copy for sentence result
-                    await navigator.clipboard.writeText(text);
+                    await navigator.clipboard.writeText(el.innerText);
                 }
-
                 const originalText = btn.innerHTML;
                 btn.innerHTML = "Copied!";
                 btn.classList.replace('bg-blue-600', 'bg-green-600');
@@ -353,9 +472,9 @@
                 }, 2000);
             } catch (err) {
                 console.error('Failed to copy rich text: ', err);
-                // Last ditch fallback to basic text
+                // Fallback to basic text
                 try {
-                    await navigator.clipboard.writeText(text);
+                    await navigator.clipboard.writeText(el.innerText);
                     btn.innerHTML = "Copied Text Only";
                     setTimeout(() => { btn.innerHTML = "Copy"; }, 2000);
                 } catch (e) {
@@ -363,6 +482,25 @@
                 }
             }
         }
+
+        async function copyFormalPlainText() {
+            const el = document.getElementById('formal-text');
+            let text = el.innerText;
+            const btn = document.getElementById('copy-formal-plain-btn');
+            try {
+                await navigator.clipboard.writeText(text);
+                const originalText = btn.innerHTML;
+                btn.innerHTML = "Copied!";
+                btn.classList.replace('bg-gray-500', 'bg-green-600');
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.classList.replace('bg-green-600', 'bg-gray-500');
+                }, 2000);
+            } catch (err) {
+                alert("Could not copy to clipboard. Please select manually.");
+            }
+        }
+        window.copyFormalPlainText = copyFormalPlainText;
 
         function escapeRTF(text) {
             if (!text) return "";
@@ -433,6 +571,86 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+        // PDF export logic
+        window.exportPDFHandouts = async function() {
+            // Always include Default.pdf first
+            const pdfs = ["Default.pdf"];
+            // Collect selected allergens
+            const selected = Array.from(document.querySelectorAll('input[name="allergen"]:checked'));
+            const uniquePDFs = new Set();
+            selected.forEach(cb => {
+                const catName = cb.getAttribute('data-category');
+                const allergenName = cb.value;
+                const cat = allergenData.find(c => c.category === catName);
+                if (cat) {
+                    const item = cat.items.find(i => i.name === allergenName);
+                    let pdf = "Default.pdf";
+                    // Use mapped PDF if specified, else use defaults
+                    if (item && item.pdf) {
+                        pdf = item.pdf;
+                    } else {
+                        // Default mapping logic
+                        if (catName === "Molds") pdf = "Mold.pdf";
+                        else if (["Tree Pollens", "Grass Pollens", "Weed Pollens"].includes(catName)) pdf = "Pollen.pdf";
+                        else if (allergenName === "Cat") pdf = "Cat.pdf";
+                        else if (allergenName === "Dog") pdf = "Dog.pdf";
+                        else if (allergenName === "Mouse") pdf = "Mouse.pdf";
+                        else if (allergenName === "Cockroach") pdf = "Cockroach.pdf";
+                        else if (allergenName === "Dust Mite") pdf = "Dust Mite.pdf";
+                    }
+                    if (pdf !== "Default.pdf") uniquePDFs.add(pdf);
+                }
+            });
+            pdfs.push(...Array.from(uniquePDFs));
+
+            // Fetch all PDFs as ArrayBuffers
+            const pdfBuffers = [];
+            for (const pdfName of pdfs) {
+                try {
+                    const response = await fetch(`Avoidance/${pdfName}`);
+                    const buffer = await response.arrayBuffer();
+                    pdfBuffers.push(buffer);
+                } catch (e) {
+                    console.error(`Failed to fetch ${pdfName}`);
+                }
+            }
+            if (pdfBuffers.length === 0) {
+                alert("No PDFs found to export.");
+                return;
+            }
+
+            // Merge PDFs using PDF-lib
+            const { PDFDocument } = window['PDFLib'];
+            const mergedPdf = await PDFDocument.create();
+            for (const pdfBytes of pdfBuffers) {
+                const pdf = await PDFDocument.load(pdfBytes);
+                const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                copiedPages.forEach(page => mergedPdf.addPage(page));
+            }
+            const mergedBytes = await mergedPdf.save();
+
+            // Download merged PDF
+            const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = "Patient_Allergen_Handouts.pdf";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        };
+        // Show/Hide Edit Allergen List Section
+        function toggleEditorSection() {
+            const section = document.getElementById('edit-allergen-section');
+            const btn = document.getElementById('toggle-editor-btn');
+            if (section.style.display === 'none') {
+                section.style.display = '';
+                btn.textContent = 'Hide Edit Allergen List';
+            } else {
+                section.style.display = 'none';
+                btn.textContent = 'Show Edit Allergen List';
+            }
+        }
+        window.toggleEditorSection = toggleEditorSection;
     </script>
 </body>
 </html>
