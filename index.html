@@ -50,6 +50,15 @@
             <p class="text-gray-600">Select positive allergens to generate patient reports</p>
         </header>
 
+        <div class="flex justify-center gap-3 mb-6">
+            <button id="default-view-btn" type="button" onclick="setAllergenView('default')" class="bg-blue-600 text-white px-5 py-2 rounded shadow hover:bg-blue-700 transition-colors">
+                Default
+            </button>
+            <button id="results-view-btn" type="button" onclick="setAllergenView('results')" class="bg-white text-blue-600 px-5 py-2 rounded shadow border border-blue-200 hover:bg-blue-50 transition-colors">
+                Results View
+            </button>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Allergen Selection Area -->
             <div class="lg:col-span-2 space-y-3">
@@ -204,11 +213,99 @@
         }
 
         let allergenData = loadAllergenData();
+        let allergenView = 'default';
+
+        // Maps resultsview.xlsx column D labels to the equivalent default allergen.
+        const resultsViewOrder = [
+            'Alternaria', 'Cockroach', 'Aspergillus', 'Bermuda', 'Maple', 'Cat',
+            'Cedar', 'Cladosporium', 'Cocklebur', 'Birch/Oak', 'Willow',
+            'Dust Mite', 'Dog', 'Hackberry', 'English Plantain', 'Cockroach',
+            'Hackberry', 'Johnson', 'Firebush/Kochia', "Lamb's Quarter",
+            'Maple', 'Dust Mite', 'Mouse', 'Mugwort', 'Walnut', 'Penicillium',
+            'Pigweed', 'Ragweed', 'Yellow Dock', 'Russian Thistle',
+            'Timothy Grass', 'Walnut', 'Ash', 'Mulberry', 'Birch/Oak'
+        ];
+
+        function getSelectedAllergens() {
+            return new Set(Array.from(document.querySelectorAll('input[name="allergen"]:checked'))
+                .map(input => `${input.dataset.category}\u0000${input.value}`));
+        }
+
+        function getAllergenItems() {
+            return allergenData.flatMap(category => category.items.map(item => ({
+                category: category.category,
+                item
+            })));
+        }
+
+        function getResultsViewItems() {
+            const items = getAllergenItems();
+            const orderedItems = [];
+            const addedItems = new Set();
+
+            resultsViewOrder.forEach(name => {
+                const allergen = items.find(entry => entry.item.name === name);
+                const key = allergen && `${allergen.category}\u0000${allergen.item.name}`;
+                if (allergen && !addedItems.has(key)) {
+                    orderedItems.push(allergen);
+                    addedItems.add(key);
+                }
+            });
+
+            // Custom or default-only allergens remain available alphabetically after spreadsheet-ordered entries.
+            const remainingItems = items.filter(allergen => {
+                const key = `${allergen.category}\u0000${allergen.item.name}`;
+                return !addedItems.has(key);
+            }).sort((a, b) => a.item.name.localeCompare(b.item.name));
+            orderedItems.push(...remainingItems);
+
+            return orderedItems;
+        }
+
+        function updateViewButtons() {
+            const defaultButton = document.getElementById('default-view-btn');
+            const resultsButton = document.getElementById('results-view-btn');
+            const isDefault = allergenView === 'default';
+            defaultButton.className = isDefault
+                ? 'bg-blue-600 text-white px-5 py-2 rounded shadow hover:bg-blue-700 transition-colors'
+                : 'bg-white text-blue-600 px-5 py-2 rounded shadow border border-blue-200 hover:bg-blue-50 transition-colors';
+            resultsButton.className = isDefault
+                ? 'bg-white text-blue-600 px-5 py-2 rounded shadow border border-blue-200 hover:bg-blue-50 transition-colors'
+                : 'bg-blue-600 text-white px-5 py-2 rounded shadow hover:bg-blue-700 transition-colors';
+        }
+
+        window.setAllergenView = function(view) {
+            allergenView = view;
+            renderAllergenSelection();
+        };
 
         // Render allergen selection UI
         function renderAllergenSelection() {
             const container = document.getElementById('categories-container');
+            const selectedAllergens = getSelectedAllergens();
             container.innerHTML = '';
+            updateViewButtons();
+
+            if (allergenView === 'results') {
+                container.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+                const div = document.createElement('div');
+                div.className = 'allergen-category md:col-span-2';
+                const itemsHtml = getResultsViewItems().map(({ category, item }) => {
+                    const key = `${category}\u0000${item.name}`;
+                    return `
+                        <label class="checkbox-item">
+                            <input type="checkbox" name="allergen" value="${item.name}" data-category="${category}" onchange="updateResults()" class="rounded text-blue-600"${selectedAllergens.has(key) ? ' checked' : ''}>
+                            <span class="text-gray-700 text-sm whitespace-nowrap">${item.name}</span>
+                        </label>
+                    `;
+                }).join('');
+                div.innerHTML = `<div class="grid grid-cols-1">${itemsHtml}</div>`;
+                container.appendChild(div);
+                updateResults();
+                return;
+            }
+
+            container.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
             allergenData.forEach((cat, index) => {
                 const div = document.createElement('div');
                 div.className = 'allergen-category';
@@ -224,9 +321,10 @@
                     <div class="grid grid-cols-1 gap-x-4">`;
                 cat.items.forEach(itemObj => {
                     const item = itemObj.name;
+                    const key = `${cat.category}\u0000${item}`;
                     itemsHtml += `
                         <label class="checkbox-item">
-                            <input type="checkbox" name="allergen" value="${item}" data-category="${cat.category}" onchange="updateResults()" class="rounded text-blue-600">
+                            <input type="checkbox" name="allergen" value="${item}" data-category="${cat.category}" onchange="updateResults()" class="rounded text-blue-600"${selectedAllergens.has(key) ? ' checked' : ''}>
                             <span class="text-gray-700 text-sm whitespace-nowrap">${item}</span>
                         </label>
                     `;
